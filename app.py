@@ -1,17 +1,14 @@
+from flask import Flask, request, jsonify
 import joblib
 import pandas as pd
-from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
 # Load trained model & encoder
 model = joblib.load("model/sales_forecast.pkl")
 encoder = joblib.load("model/encoder.pkl")
+feature_order = joblib.load("model/feature_order.pkl")
 
-# Define expected categorical columns
-categorical_cols = ['Store_Type', 'Location_Type', 'Region_Code', 'Discount']
-
-# **Homepage Route (Fixes the 404 Error)**
 @app.route('/')
 def home():
     return jsonify({"message": "Welcome to the Sales Forecasting API! Use /predict to get predictions."})
@@ -21,16 +18,10 @@ def predict_sales():
     try:
         # Get JSON request data
         data = request.get_json()
-
-        # Validate input
-        if not all(key in data for key in ["Date", "#Order", "Store_Type", "Location_Type", "Region_Code", "Discount"]):
-            return jsonify({"error": "Missing required input fields"}), 400
-
-        # Convert data to DataFrame
         df = pd.DataFrame([data])
 
-        # Handle date features
-        df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
+        # Convert 'Date' and extract date-related features
+        df['Date'] = pd.to_datetime(df['Date'], format="%Y-%m-%d", errors='coerce')
         if df['Date'].isna().any():
             return jsonify({"error": "Invalid date format"}), 400
 
@@ -40,6 +31,7 @@ def predict_sales():
         df.drop(columns=['Date'], inplace=True)
 
         # Encode categorical features
+        categorical_cols = ['Store_Type', 'Location_Type', 'Region_Code', 'Discount']
         encoded_features = encoder.transform(df[categorical_cols])
         encoded_df = pd.DataFrame(encoded_features, columns=encoder.get_feature_names_out())
 
@@ -47,9 +39,8 @@ def predict_sales():
         df.drop(columns=categorical_cols, inplace=True)
         df = pd.concat([df.reset_index(drop=True), encoded_df.reset_index(drop=True)], axis=1)
 
-        # Ensure feature order matches training
-        model_features = joblib.load("model/feature_order.pkl")  # Store feature order in a file during training
-        df = df[model_features]
+        # **Ensure feature order matches training**
+        df = df[feature_order]
 
         # Make prediction
         prediction = model.predict(df)
