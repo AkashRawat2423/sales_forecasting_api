@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import joblib
 import pandas as pd
+import traceback
 
 app = Flask(__name__)
 
@@ -13,41 +14,63 @@ feature_order = joblib.load("model/feature_order.pkl")
 def home():
     return jsonify({"message": "Welcome to the Sales Forecasting API! Use /predict to get predictions."})
 
+
 @app.route('/predict', methods=['POST'])
 def predict_sales():
     try:
-        # Get JSON request data
+        print("Received Request for Prediction")
         data = request.get_json()
         df = pd.DataFrame([data])
 
-        # Convert 'Date' and extract date-related features
-        df['Date'] = pd.to_datetime(df['Date'], format="%Y-%m-%d", errors='coerce')
-        if df['Date'].isna().any():
-            return jsonify({"error": "Invalid date format"}), 400
+        # Ensure 'Date' is processed correctly
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce', format="%Y-%m-%d")
 
+        # Extract time-based features
         df['Year'] = df['Date'].dt.year
-        df['Month'] = df['Date'].dt.month
+        df['WeekOfYear'] = df['Date'].dt.isocalendar().week
         df['DayOfWeek'] = df['Date'].dt.dayofweek
+        df['IsWeekend'] = df['DayOfWeek'].apply(lambda x: 1 if x in [5, 6] else 0)
         df.drop(columns=['Date'], inplace=True)
 
-        # Encode categorical features
+        # One-Hot Encode Categorical Features (Ensuring Correct Columns)
         categorical_cols = ['Store_Type', 'Location_Type', 'Region_Code', 'Discount']
-        encoded_features = encoder.transform(df[categorical_cols])
-        encoded_df = pd.DataFrame(encoded_features, columns=encoder.get_feature_names_out())
 
-        # Drop original categorical columns and merge encoded features
-        df.drop(columns=categorical_cols, inplace=True)
-        df = pd.concat([df.reset_index(drop=True), encoded_df.reset_index(drop=True)], axis=1)
+        for col in categorical_cols:
+            if col not in df.columns:
+                df[col] = "Unknown"  # Handle missing categories gracefully
 
-        # **Ensure feature order matches training**
-        df = df[feature_order]
+        expected_categories = encoder.feature_names_in_
+
+        # Ensure all categorical columns exist in the correct order
+        df = df.reindex(columns=expected_categories, fill_value="Unknown")
+
+        # Encode the categorical variables
+        encoded_features = encoder.transform(df[expected_categories])
+        encoded_df = pd.DataFrame(encoded_features, columns=encoder.get_feature_names_out(expected_categories))
+
+        df = df.drop(columns=categorical_cols).reset_index(drop=True)
+        df = pd.concat([df, encoded_df], axis=1)
+
+        # Ensure all expected columns exist, fill missing ones with 0
+        for col in feature_order:
+            if col not in df.columns:
+                df[col] = 0  # Fill missing feature columns with 0
+
+        df = df[feature_order]  # Ensure correct column order
+
+        print("Processed Input Data:\n", df.head())
 
         # Make prediction
         prediction = model.predict(df)
-        return jsonify({"predicted_sales": round(float(prediction[0]), 2)})
+        print("Prediction:", prediction[0])
+
+        return jsonify({"predicted_sales": round(prediction[0], 2)})
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f" ERROR in Prediction: {e}")
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)})
+
 
 if __name__ == '__main__':
     app.run(debug=True)
