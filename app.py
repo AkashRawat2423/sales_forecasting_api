@@ -1,7 +1,6 @@
-from flask import Flask, request, jsonify
 import joblib
 import pandas as pd
-import numpy as np
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
@@ -11,6 +10,11 @@ encoder = joblib.load("model/encoder.pkl")
 
 # Define expected categorical columns
 categorical_cols = ['Store_Type', 'Location_Type', 'Region_Code', 'Discount']
+
+# **Homepage Route (Fixes the 404 Error)**
+@app.route('/')
+def home():
+    return jsonify({"message": "Welcome to the Sales Forecasting API! Use /predict to get predictions."})
 
 @app.route('/predict', methods=['POST'])
 def predict_sales():
